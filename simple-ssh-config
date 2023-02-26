@@ -1,0 +1,5 @@
+Host <identifier>
+  HostName <host>
+  User <user>
+  Port <port>
+  IdentityFile <~/.ssh/key.key>
