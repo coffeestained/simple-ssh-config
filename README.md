@@ -1,36 +1,31 @@
-# simple-ssh-config
-Eh, something I use pretty often. Feel free to use and expand on if needed.
+# ssh-toolkit
 
-**Usage**
+`sshkit`: aliases, connect, run, push/pull, tunnel, key copy, health check. One bash file, no deps.
 
-Super simple. But can become more complex when you get into bastion, multiple keys, tunneling etc. Lots of information on the internet available if you need help with that.
+Everything reads your normal `~/.ssh/config` (or `$SSHKIT_CONFIG`), so plain `ssh web` keeps working alongside it.
 
-**Creating a Sample Config File in Linux**
-1. Terminal: ```cd ~/.ssh/ && nano simple-ssh-config``` 
-2. Terminal & Save:
+## Runbook
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/coffeestained/ssh-toolkit/main/sshkit -o ~/.local/bin/sshkit && chmod +x ~/.local/bin/sshkit
+
+sshkit add web deploy@203.0.113.10:22 -i ~/.ssh/web.key
+sshkit key web                          # install your public key
+sshkit check web                        # ok?
+sshkit go web                           # shell
+sshkit run web 'df -h /'                # one-off command
+sshkit push web ./dist /var/www/app/    # rsync up (scp fallback)
+sshkit pull web /var/log/nginx ./logs   # rsync down
+sshkit tunnel web 5432                  # localhost:5432 -> remote 5432 (ctrl-c closes)
+sshkit tunnel web 27017:db.internal:27017
+sshkit ls && sshkit rm web
 ```
-Host <identifier>
-  HostName <host>
-  User <user>
-  Port <port>
-  IdentityFile <~/.ssh/key.key>
-```
-3. Terminal: ```ssh- F simple-ssh-config <identifier>```
-4. Despite everything, it's still you. But at least you've implemented simple-ssh-config.
 
-**Bonus Tidbit**
+## Files
 
-Say you want to also have a config in-place to create a tunnel to your target host.
-As an example. You need to connect to a MongoDB instance using localhost:<port> on your current machine.
+| file | purpose |
+|---|---|
+| `sshkit` | the tool; `sshkit` with no args prints usage |
+| `config.example` | what `sshkit add` writes, for hand-editing |
 
-1. Terminal: ```nano ~/.ssh/<yourConfigFile>```
-2. Terminal: 
-```
-Host mongodb-tunnel
-    HostName <host>
-    User <user>
-    IdentityFile ~/.ssh/mongodb-key
-    LocalForward <mongodbPortOnHost> 127.0.0.1:<targetPortOnYourMachine>
-```
-3. Terminal: ```ssh -F <yourConfigFile> mongodb-tunnel -N```
-4. Boom. Your host's MongoDB instance is available on localhost:<targetPortOnYourMachine>
+MIT © Matthew Grady

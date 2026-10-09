@@ -1,0 +1,13 @@
+# What `sshkit add web deploy@203.0.113.10:22 -i ~/.ssh/web.key` appends.
+Host web
+  HostName 203.0.113.10
+  User deploy
+  Port 22
+  IdentityFile ~/.ssh/web.key
+  IdentitiesOnly yes
+
+# Through a bastion: ssh/sshkit go internal-db just works.
+Host internal-db
+  HostName 10.0.5.20
+  User deploy
+  ProxyJump web

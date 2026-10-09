@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# sshkit — the ssh things you do every day, with aliases from your ssh config.
+#
+#   sshkit add  web user@1.2.3.4:22 -i ~/.ssh/web.key   # append a Host block
+#   sshkit ls                                           # list aliases
+#   sshkit go   web                                     # ssh in
+#   sshkit run  web 'uptime'                            # remote command
+#   sshkit push web ./dist /var/www/                    # local -> remote (rsync, scp fallback)
+#   sshkit pull web /var/log/nginx ./logs               # remote -> local
+#   sshkit tunnel web 5432[:dbhost:5432]                # localhost:5432 -> remote 5432
+#   sshkit key  web                                     # ssh-copy-id
+#   sshkit check web                                    # can we connect?
+#   sshkit rm   web                                     # remove the Host block
+#
+# Config file: $SSHKIT_CONFIG, else ~/.ssh/config. Every subcommand passes -F so a
+# throwaway config (e.g. per client) works the same as the default one.
+set -euo pipefail
+
+CONFIG="${SSHKIT_CONFIG:-$HOME/.ssh/config}"
+SSH=(ssh -F "$CONFIG")
+
+usage() { sed -n '2,15p' "$0" >&2; exit 1; }
+die()   { echo "sshkit: $*" >&2; exit 1; }
+
+# Pull the Host block for an alias (used by rm and to detect duplicates).
+has_alias() { grep -qE "^Host[[:space:]]+$1([[:space:]]|$)" "$CONFIG" 2>/dev/null; }
+
+cmd_ls() {
+  [[ -f "$CONFIG" ]] || die "no config at $CONFIG"
+  # Only concrete aliases; skip wildcard patterns like "Host *".
+  awk '/^Host[[:space:]]/ { for (i = 2; i <= NF; i++) if ($i !~ /[*?]/) print $i }' "$CONFIG"
+}
+
+cmd_add() {
+  local alias="${1:-}" target="${2:-}" key="" port=""
+  [[ -n "$alias" && -n "$target" ]] || usage
+  shift 2
+  while getopts "i:" opt; do case "$opt" in i) key="$OPTARG" ;; *) usage ;; esac; done
+
+  has_alias "$alias" && die "alias '$alias' already exists in $CONFIG"
+  [[ "$target" == *@* ]] || die "target must be user@host[:port]"
+  local user="${target%%@*}" hostport="${target#*@}" host
+  host="${hostport%%:*}"; [[ "$hostport" == *:* ]] && port="${hostport#*:}"
+
+  mkdir -p "$(dirname "$CONFIG")"; touch "$CONFIG"; chmod 600 "$CONFIG"
+  {
+    echo ""
+    echo "Host $alias"
+    echo "  HostName $host"
+    echo "  User $user"
+    [[ -n "$port" ]] && echo "  Port $port"
+    [[ -n "$key"  ]] && echo "  IdentityFile $key" && echo "  IdentitiesOnly yes"
+  } >> "$CONFIG"
+  echo "added $alias -> $user@$host${port:+:$port}"
+}
+
+cmd_rm() {
+  local alias="${1:-}"; [[ -n "$alias" ]] || usage
+  has_alias "$alias" || die "no alias '$alias'"
+  local tmp; tmp=$(mktemp)
+  # Drop from "Host <alias>" up to (not including) the next Host line.
+  awk -v a="$alias" '
+    /^Host[[:space:]]/ { skip = ($2 == a) }
+    !skip' "$CONFIG" > "$tmp"
+  mv "$tmp" "$CONFIG"; chmod 600 "$CONFIG"
+  echo "removed $alias"
+}
+
+cmd_go()    { [[ -n "${1:-}" ]] || usage; exec "${SSH[@]}" "$@"; }
+cmd_run()   { [[ -n "${2:-}" ]] || usage; local h="$1"; shift; exec "${SSH[@]}" "$h" -- "$@"; }
+cmd_key()   { [[ -n "${1:-}" ]] || usage; exec ssh-copy-id -F "$CONFIG" "$@"; }
+
+cmd_check() {
+  [[ -n "${1:-}" ]] || usage
+  if "${SSH[@]}" -o BatchMode=yes -o ConnectTimeout=5 "$1" true 2>/dev/null; then
+    echo "$1: ok"
+  else
+    echo "$1: failed (auth or network)"; exit 1
+  fi
+}
+
+# rsync keeps permissions and resumes; scp is the fallback when a side lacks rsync.
+copy() {
+  local src="$1" dst="$2"
+  if command -v rsync >/dev/null; then
+    rsync -az --info=progress2 -e "ssh -F $CONFIG" "$src" "$dst"
+  else
+    scp -r -F "$CONFIG" "$src" "$dst"
+  fi
+}
+cmd_push() { [[ -n "${3:-}" ]] || usage; copy "$2" "$1:$3"; }
+cmd_pull() { [[ -n "${3:-}" ]] || usage; copy "$1:$2" "$3"; }
+
+cmd_tunnel() {
+  local host="${1:-}" spec="${2:-}"
+  [[ -n "$host" && -n "$spec" ]] || usage
+  # "5432" means localhost:5432 -> 127.0.0.1:5432 on the remote;
+  # "5432:db.internal:5432" forwards through the remote to a third host.
+  [[ "$spec" == *:* ]] || spec="$spec:127.0.0.1:$spec"
+  echo "tunnel open: localhost:${spec%%:*} -> $host (${spec#*:}); ctrl-c to close"
+  exec "${SSH[@]}" -N -L "$spec" "$host"
+}
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  ls|add|rm|go|run|key|check|push|pull|tunnel) "cmd_$cmd" "$@" ;;
+  *) usage ;;
+esac
